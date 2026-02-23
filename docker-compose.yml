@@ -1,0 +1,31 @@
+services:
+  # ── ngrok tunnel ──────────────────────────────────────────────
+  ngrok:
+    image: ngrok/ngrok:latest
+    command: http bot:8000
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    ports:
+      - "4040:4040"          # ngrok dashboard
+    restart: unless-stopped
+
+  # ── finance bot ───────────────────────────────────────────────
+  bot:
+    build: .
+    entrypoint: ["sh", "/app/entrypoint.sh"]
+    env_file: .env
+    environment:
+      DATABASE_PATH: /app/data/finance.db
+      LOG_DIR: /app/logs
+      HOST: "0.0.0.0"
+      PORT: "8000"
+    volumes:
+      - bot-data:/app/data
+      - bot-logs:/app/logs
+    depends_on:
+      - ngrok
+    restart: unless-stopped
+
+volumes:
+  bot-data:
+  bot-logs:

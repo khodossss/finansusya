@@ -28,6 +28,7 @@ class _PendingNotification:
     target_user_ids: list[int]
     text: str  # fully-formatted Markdown message
     task: asyncio.Task[None] | None = None
+    is_removal: bool = False
 
 
 class NotificationService:
@@ -38,6 +39,8 @@ class NotificationService:
         self._debounce = debounce_seconds
         # key = transaction id (int), value = pending notification
         self._pending: dict[int, _PendingNotification] = {}
+        # tx_ids whose notifications have actually been delivered
+        self._notified: set[int] = set()
 
     # -- public API ----------------------------------------------------------
 
@@ -57,6 +60,34 @@ class NotificationService:
         self._schedule(tx_id=tx_id, actor_id=actor_id,
                        target_user_ids=target_user_ids, text=text)
 
+    async def notify_remove(
+        self,
+        *,
+        tx_id: int,
+        actor_id: int,
+        target_user_ids: list[int],
+        text: str,
+    ) -> None:
+        """Send a remove notification only if this tx was previously notified.
+
+        If a pending (unsent) notification exists for *tx_id*, it is
+        cancelled silently.  A remove notification is only sent when
+        the workspace has already been told about this transaction.
+        """
+        # Cancel any pending unsent notification for this tx
+        prev = self._pending.pop(tx_id, None)
+        if prev and prev.task and not prev.task.done():
+            prev.task.cancel()
+
+        # Only notify removal if the tx was previously notified
+        if tx_id not in self._notified:
+            return
+
+        self._notified.discard(tx_id)
+        self._schedule(tx_id=tx_id, actor_id=actor_id,
+                       target_user_ids=target_user_ids, text=text,
+                       is_removal=True)
+
     # -- internals -----------------------------------------------------------
 
     def _schedule(
@@ -66,6 +97,7 @@ class NotificationService:
         actor_id: int,
         target_user_ids: list[int],
         text: str,
+        is_removal: bool = False,
     ) -> None:
         """Create or reset the debounce timer for *tx_id*."""
         # Cancel previous pending notification for this tx
@@ -77,6 +109,7 @@ class NotificationService:
             actor_id=actor_id,
             target_user_ids=target_user_ids,
             text=text,
+            is_removal=is_removal,
         )
         pending.task = asyncio.create_task(self._delayed_send(tx_id, pending))
         self._pending[tx_id] = pending
@@ -90,6 +123,10 @@ class NotificationService:
 
         # Clean up tracking
         self._pending.pop(tx_id, None)
+
+        # Mark as notified so we know remove notifications are warranted
+        if not pending.is_removal:
+            self._notified.add(tx_id)
 
         # Send to every workspace member except the actor
         for uid in pending.target_user_ids:

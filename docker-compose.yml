@@ -20,12 +20,23 @@ services:
       HOST: "0.0.0.0"
       PORT: "8000"
     volumes:
-      - bot-data:/app/data
-      - bot-logs:/app/logs
+      - ./data:/app/data
+      - ./logs:/app/logs
     depends_on:
       - ngrok
     restart: unless-stopped
 
-volumes:
-  bot-data:
-  bot-logs:
+  # ── scheduled restart every 6 hours ──────────────────────────
+  restart-scheduler:
+    image: docker:cli
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        BOT=$(docker ps -qf "label=com.docker.compose.service=bot" | head -1)
+        echo "0 */6 * * * docker restart $${BOT}" | crontab -
+        crond -f -l 2
+    depends_on:
+      - bot
+    restart: unless-stopped

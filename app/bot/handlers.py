@@ -566,7 +566,7 @@ async def remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             if user:
                 notifier = _get_notifier(context)
                 targets = await _other_workspace_users(repo, tx.workspace_id_hash)
-                await notifier.notify(
+                await notifier.notify_remove(
                     tx_id=tx_id,
                     actor_id=user.telegram_user_id,
                     target_user_ids=targets,

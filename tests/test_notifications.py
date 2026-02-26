@@ -81,6 +81,92 @@ class TestNotify:
         assert "removed" in text
 
 
+class TestNotifyRemove:
+    """Tests for notify_remove – only sends if tx was previously notified."""
+
+    async def test_remove_skipped_when_never_notified(
+        self, notifier: NotificationService, bot: MagicMock,
+    ):
+        """If a tx was never notified about, remove notification is skipped."""
+        await notifier.notify_remove(
+            tx_id=99,
+            actor_id=100,
+            target_user_ids=[100, 200],
+            text="🗑 *Alice* removed:\n\nsome tx",
+        )
+        await asyncio.sleep(0.05)
+        bot.send_message.assert_not_called()
+
+    async def test_remove_sent_when_previously_notified(
+        self, notifier: NotificationService, bot: MagicMock,
+    ):
+        """If a tx was notified about, remove notification is sent."""
+        # First, notify about the tx (add)
+        await notifier.notify(
+            tx_id=50,
+            actor_id=100,
+            target_user_ids=[100, 200],
+            text="➕ *Alice* added:\n\nsome tx",
+        )
+        await asyncio.sleep(0.05)
+        assert bot.send_message.call_count == 1
+
+        bot.send_message.reset_mock()
+
+        # Now remove → should send
+        await notifier.notify_remove(
+            tx_id=50,
+            actor_id=100,
+            target_user_ids=[100, 200],
+            text="🗑 *Alice* removed:\n\nsome tx",
+        )
+        await asyncio.sleep(0.05)
+        assert bot.send_message.call_count == 1
+        assert "removed" in bot.send_message.call_args.kwargs["text"]
+
+    async def test_remove_cancels_pending_unsent(self, bot: MagicMock):
+        """If a tx has a pending (unsent) notification, remove cancels it silently."""
+        svc = NotificationService(bot, debounce_seconds=0.2)
+
+        # Add notification – still pending (debounce not elapsed)
+        await svc.notify(
+            tx_id=60,
+            actor_id=100,
+            target_user_ids=[100, 200],
+            text="➕ *Bob* added:\n\nsome tx",
+        )
+
+        # Immediately remove – pending add should be cancelled, no remove sent
+        await svc.notify_remove(
+            tx_id=60,
+            actor_id=100,
+            target_user_ids=[100, 200],
+            text="🗑 *Bob* removed:\n\nsome tx",
+        )
+        await asyncio.sleep(0.3)
+
+        # Nothing should have been sent
+        bot.send_message.assert_not_called()
+
+    async def test_remove_clears_notified_flag(
+        self, notifier: NotificationService, bot: MagicMock,
+    ):
+        """After a remove notification, the tx_id is no longer in _notified."""
+        await notifier.notify(
+            tx_id=70, actor_id=100, target_user_ids=[100, 200],
+            text="➕ add",
+        )
+        await asyncio.sleep(0.05)
+        assert 70 in notifier._notified
+
+        await notifier.notify_remove(
+            tx_id=70, actor_id=100, target_user_ids=[100, 200],
+            text="🗑 remove",
+        )
+        await asyncio.sleep(0.05)
+        assert 70 not in notifier._notified
+
+
 class TestDebounce:
     async def test_rapid_edits_send_only_once(self, bot: MagicMock):
         """Multiple edits within the debounce window → single notification."""

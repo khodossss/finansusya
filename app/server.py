@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI, Request, Response
 
 from telegram import Update
@@ -14,6 +17,50 @@ from app.config import Settings, get_settings
 from app.db.repository import Repository
 
 logger = logging.getLogger(__name__)
+
+NGROK_API = os.getenv("NGROK_API_URL", "http://ngrok:4040")
+NGROK_POLL_INTERVAL = 30  # seconds
+
+
+# ---------------------------------------------------------------------------
+# Ngrok URL watcher — polls ngrok and re-registers webhook when URL changes
+# ---------------------------------------------------------------------------
+
+async def _watch_ngrok(bot_app, settings: Settings) -> None:
+    """Periodically poll ngrok for the current tunnel URL.
+
+    If the URL changes (e.g. ngrok restarted), re-register the Telegram
+    webhook automatically so the bot stays reachable.
+    """
+    current_url: str | None = settings.webhook_url or None
+
+    async with httpx.AsyncClient() as client:
+        while True:
+            await asyncio.sleep(NGROK_POLL_INTERVAL)
+            try:
+                resp = await client.get(f"{NGROK_API}/api/tunnels", timeout=5)
+                tunnels = resp.json().get("tunnels", [])
+                if not tunnels:
+                    logger.warning("ngrok has no active tunnels")
+                    continue
+                new_url = tunnels[0]["public_url"]
+            except Exception:
+                logger.warning("Failed to poll ngrok", exc_info=True)
+                continue
+
+            if new_url != current_url:
+                logger.info("ngrok URL changed: %s → %s", current_url, new_url)
+                webhook_path = f"{new_url}/webhook"
+                try:
+                    await bot_app.bot.set_webhook(
+                        url=webhook_path,
+                        secret_token=settings.webhook_secret or None,
+                    )
+                    current_url = new_url
+                    logger.info("Webhook re-registered → %s", webhook_path)
+                except Exception:
+                    logger.error("Failed to re-register webhook", exc_info=True)
+
 
 # ---------------------------------------------------------------------------
 # Lifespan: set up & tear down shared resources
@@ -41,7 +88,6 @@ async def lifespan(app: FastAPI):
         BotCommand("summary", "Income / expenses / net summary"),
         BotCommand("question", "Ask an AI question about your finances"),
         BotCommand("change_currency", "Change currency & convert transactions"),
-        BotCommand("cancel", "Cancel current setup"),
     ])
 
     # Set the webhook (if configured)
@@ -55,9 +101,18 @@ async def lifespan(app: FastAPI):
 
     app.state.bot_app = bot_app
 
+    # Start background ngrok watcher
+    watcher_task = asyncio.create_task(_watch_ngrok(bot_app, settings))
+
     yield
 
     # Shutdown
+    watcher_task.cancel()
+    try:
+        await watcher_task
+    except asyncio.CancelledError:
+        pass
+
     # Cancel pending notifications
     notifier = bot_app.bot_data.get("notifier")
     if notifier:

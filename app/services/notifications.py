@@ -29,6 +29,7 @@ class _PendingNotification:
     text: str  # fully-formatted Markdown message
     task: asyncio.Task[None] | None = None
     is_removal: bool = False
+    reply_markup: object | None = None
 
 
 class NotificationService:
@@ -51,6 +52,7 @@ class NotificationService:
         actor_id: int,
         target_user_ids: list[int],
         text: str,
+        reply_markup: object | None = None,
     ) -> None:
         """Schedule (or reschedule) a notification for *tx_id*.
 
@@ -58,7 +60,8 @@ class NotificationService:
         its timer is reset and the message is replaced with *text*.
         """
         self._schedule(tx_id=tx_id, actor_id=actor_id,
-                       target_user_ids=target_user_ids, text=text)
+                       target_user_ids=target_user_ids, text=text,
+                       reply_markup=reply_markup)
 
     async def notify_remove(
         self,
@@ -98,6 +101,7 @@ class NotificationService:
         target_user_ids: list[int],
         text: str,
         is_removal: bool = False,
+        reply_markup: object | None = None,
     ) -> None:
         """Create or reset the debounce timer for *tx_id*."""
         # Cancel previous pending notification for this tx
@@ -110,6 +114,7 @@ class NotificationService:
             target_user_ids=target_user_ids,
             text=text,
             is_removal=is_removal,
+            reply_markup=reply_markup,
         )
         pending.task = asyncio.create_task(self._delayed_send(tx_id, pending))
         self._pending[tx_id] = pending
@@ -137,6 +142,7 @@ class NotificationService:
                     chat_id=uid,
                     text=pending.text,
                     parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=pending.reply_markup,
                 )
             except Exception:
                 logger.warning(

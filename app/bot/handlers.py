@@ -11,7 +11,6 @@ from telegram import (
     BotCommand,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    ReplyKeyboardMarkup,
     Update,
 )
 from telegram.constants import ParseMode
@@ -282,35 +281,21 @@ HELP_TEXT = (
     "*⚙️ Other*\n"
     "/start — create or join a workspace\n"
     "/change\\_currency — change default currency & convert all transactions\\n"
-    "/help — show this message\n"
-    "/cancel — cancel current setup"
-)
-
-
-HELP_KEYBOARD = ReplyKeyboardMarkup(
-    [["📖 Help"]],
-    resize_keyboard=True,
-    is_persistent=True,
+    "/help — show this message"
 )
 
 
 async def _send_help(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send the help message with a persistent bottom button."""
+    """Send the help message."""
     await context.bot.send_message(
         chat_id=chat_id,
         text=HELP_TEXT,
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=HELP_KEYBOARD,
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help command."""
-    await _send_help(update.effective_chat.id, context)
-
-
-async def help_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle the persistent '📖 Help' button tap."""
     await _send_help(update.effective_chat.id, context)
 
 
@@ -411,11 +396,17 @@ async def handle_transaction_message(update: Update, context: ContextTypes.DEFAU
     # Notify other workspace members
     notifier = _get_notifier(context)
     targets = await _other_workspace_users(repo, user.workspace_id_hash)
+    from app.bot.formatting import _esc
+    raw = _esc(tx.raw_text) if tx.raw_text else ""
+    notify_text = f"➕ *{user.name}* added:\n\n" + format_transaction_details(tx)
+    if raw:
+        notify_text += f"\n\n💬 _{raw}_"
     await notifier.notify(
         tx_id=tx_id,
         actor_id=user.telegram_user_id,
         target_user_ids=targets,
-        text=f"➕ *{user.name}* added:\n\n" + format_transaction_details(tx),
+        text=notify_text,
+        reply_markup=_edit_keyboard(tx_id),
     )
 
 
@@ -498,6 +489,7 @@ async def edit_field_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 actor_id=user.telegram_user_id,
                 target_user_ids=targets,
                 text=f"✏️ *{user.name}* edited:\n\n" + format_transaction_details(tx),
+                reply_markup=_edit_keyboard(tx_id),
             )
         return
 
@@ -636,6 +628,7 @@ async def edit_value_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             actor_id=actor.telegram_user_id,
             target_user_ids=targets,
             text=f"✏️ *{actor.name}* edited:\n\n" + format_transaction_details(tx),
+            reply_markup=_edit_keyboard(tx_id),
         )
 
 
@@ -946,11 +939,6 @@ def create_bot_app(settings: Settings, repo: Repository) -> Application:
     app.add_handler(CommandHandler("summary", summary_command))
     app.add_handler(CommandHandler("question", question_command))
     app.add_handler(CommandHandler("change_currency", change_currency_command))
-
-    # Persistent "📖 Help" keyboard button
-    app.add_handler(
-        MessageHandler(filters.Regex(r"^📖\s*Help$"), help_button_handler)
-    )
 
     # CSV download callback
     app.add_handler(CallbackQueryHandler(csv_download_callback, pattern=r'^\{"a":"csv"'))

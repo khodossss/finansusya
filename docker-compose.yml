@@ -25,18 +25,3 @@ services:
     depends_on:
       - ngrok
     restart: unless-stopped
-
-  # ── scheduled restart every 6 hours ──────────────────────────
-  restart-scheduler:
-    image: docker:cli
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        BOT=$(docker ps -qf "label=com.docker.compose.service=bot" | head -1)
-        echo "0 */6 * * * docker restart $${BOT}" | crontab -
-        crond -f -l 2
-    depends_on:
-      - bot
-    restart: unless-stopped
